@@ -470,7 +470,7 @@ if uploaded_lbp is not None:
             fig_ch.update_layout(height=280, margin=dict(l=10, r=10, t=35, b=10))
             st.plotly_chart(fig_ch, use_container_width=True)
 
-        # TAB 5: ACTION PLAN GAP MHS (LIST SKU SUDAH MASUK SESUAI REALISASI KUANTITAS)
+        # TAB 5: ACTION PLAN GAP MHS (LIST SKU SUDAH MASUK SESUAI REALISASI KUANTITAS TANPA BATASAN)
         with tab5:
             st.subheader("🎯 Action Plan: Toko Belum Lolos & Detail SKU Masuk/Belum Masuk")
             sls_options = ['SEMUA TIM SS'] + selected_salesmen
