@@ -52,6 +52,55 @@ DEFAULT_TARGET_CHANNEL = {
     '110': 25   # Grosir Modern / Supermarket
 }
 
+# --- MASTER KATA KUNCI PEMETAAN BERDASARKAN DOKUMEN RESMI M245 ---
+KEYWORDS_GT_RETAIL_KIOS = [
+    'TORABIKA CAPPUCINO', 'CREAMY LATTE', 'TORA MOKA', 'TORAMOKA', 'TORA BUBUK', 'TURKISH',
+    'ENERGEN COKELAT', 'ENERGEN VANILLA', 'CHAMPION', 'DRINK BENG', 'TEH SUSU JASMINE',
+    'WOW SPAGETI CARBONARA', 'WOW SPAGETI GORENG', 'MIGELAS AYAM BAWANG', 'MIGELAS BASO', 'MIGELAS SOTO', 'MIGELAS MERCON', 'BURYAM',
+    'GENTLE GEN TWINPACK', 'KILAU NIPIS'
+]
+
+KEYWORDS_GT_RETAIL_LARGE = KEYWORDS_GT_RETAIL_KIOS + [
+    'TORADUO', 'WOW BOLOGNESE', 'MIGELAS KARI'
+]
+
+KEYWORDS_GT_GROSIR = KEYWORDS_GT_RETAIL_LARGE + [
+    'TORASUSU', 'ENERGEN KACANG HIJAU', 'ENERGEN VANTOP', 'MIGELAS SOP BUNTUT', 'MIGELAS SOSIS BBQ', 'MIGELAS GORENG'
+]
+
+KEYWORDS_GMM = [
+    'TORABIKA', 'TORAMOKA', 'TORASUSU', 'TORADUO', 'TORACAFE', 'TURKISH',
+    'ENERGEN', 'CHAMPION', 'DRINK BENG', 'TEH SUSU JASMINE',
+    'WOW SPAGETI', 'MIGELAS', 'SUPER BUBUR', 'BURYAM',
+    'GENTLE GEN', 'KILAU NIPIS'
+]
+
+KEYWORDS_ST = [
+    'TORABIKA CAPPUCINO', 'CREAMY LATTE', 'TORAMOKA', 'TORABIKA BUBUK', 'TURKISH', 'TORACAFE',
+    'ENERGEN', 'CHAMPION', 'DRINK BENG', 'TEH SUSU JASMINE',
+    'WOW SPAGETI', 'MIGELAS', 'SUPER BUBUR', 'KILAU NIPIS'
+]
+
+def get_keywords_for_channel(s_force, ch_pref):
+    if '226' in str(s_force) or 'ST' in str(s_force).upper():
+        return KEYWORDS_ST, "Speciality Trade (KVS ST)"
+    elif str(ch_pref) == '110':
+        return KEYWORDS_GMM, "General Modern Trade (GMM)"
+    elif str(ch_pref) in ['114', '115']:
+        return KEYWORDS_GT_GROSIR, "Grosir / Semi Grosir GT"
+    elif str(ch_pref) == '113':
+        return KEYWORDS_GT_RETAIL_LARGE, "Retail Large GT"
+    else:
+        return KEYWORDS_GT_RETAIL_KIOS, "Retail Kios / Wet Retail GT"
+
+def cek_sku_valid_oleh_nama(nama_produk, s_force, ch_pref):
+    nama_upper = str(nama_produk).upper()
+    allowed_list, _ = get_keywords_for_channel(s_force, ch_pref)
+    for kw in allowed_list:
+        if kw in nama_upper:
+            return True
+    return False
+
 # Fungsi Penomoran Mulai dari 1
 def beri_nomor_urut(df_target):
     df_res = df_target.copy().reset_index(drop=True)
@@ -106,7 +155,7 @@ uploaded_lbp = st.sidebar.file_uploader("📂 Upload File LBP (.txt / .csv / .xl
 # --- PEMROSESAN DATA & DASHBOARD ---
 if uploaded_lbp is not None:
     try:
-        with st.spinner("Memproses data LBP..."):
+        with st.spinner("Memproses data LBP & memetakan SKU sesuai channel..."):
             df_raw = parse_raw_lbp(uploaded_lbp)
 
             df_raw['Salesman'] = df_raw['Salesman'].astype(str).str.strip()
@@ -114,6 +163,8 @@ if uploaded_lbp is not None:
             df_raw['Nama Produk'] = df_raw['Nama Produk'].astype(str).str.strip()
             df_raw['QTYPCS'] = pd.to_numeric(df_raw['QTYPCS'], errors='coerce').fillna(0)
             df_raw['AMOUNT'] = pd.to_numeric(df_raw['AMOUNT'], errors='coerce').fillna(0)
+            if 'Salesforce' not in df_raw.columns: df_raw['Salesforce'] = '-'
+            df_raw['Salesforce'] = df_raw['Salesforce'].astype(str).str.strip()
 
             if 'Kabupaten' not in df_raw.columns: df_raw['Kabupaten'] = '-'
             else: df_raw['Kabupaten'] = df_raw['Kabupaten'].fillna('-').astype(str).str.strip()
@@ -148,17 +199,29 @@ if uploaded_lbp is not None:
 
         df = df_raw[df_raw['Salesman'].isin(selected_salesmen)].copy()
 
-        base_cols = ['No Outlet', 'Nama Outlet', 'Kode Sales', 'Salesman', 'Channel', 'Kabupaten', 'Kecamatan', 'Kode Pasar']
+        base_cols = ['No Outlet', 'Nama Outlet', 'Kode Sales', 'Salesman', 'Channel', 'Salesforce', 'Kabupaten', 'Kecamatan', 'Kode Pasar']
         cols_exist = [c for c in base_cols if c in df.columns]
         outlet_master = df[cols_exist].drop_duplicates(subset=['No Outlet']).copy()
         outlet_master['Channel_Prefix'] = outlet_master['Channel'].astype(str).str.slice(0, 3)
 
-        outlet_sku_agg = df.groupby(['No Outlet', 'Pcode_Str'])['NET_QTY'].sum().reset_index()
-        outlet_sku_positive = outlet_sku_agg[outlet_sku_agg['NET_QTY'] > 0]
-        sku_count_per_toko = outlet_sku_positive.groupby('No Outlet')['Pcode_Str'].nunique().reset_index(name='Realisasi SKU Sold')
+        outlet_prod_agg = df.groupby(['No Outlet', 'Nama Produk', 'Salesforce'])['NET_QTY'].sum().reset_index()
+        outlet_prod_positive = outlet_prod_agg[outlet_prod_agg['NET_QTY'] > 0]
 
-        calc_toko = pd.merge(outlet_master, sku_count_per_toko, on='No Outlet', how='left').fillna({'Realisasi SKU Sold': 0})
-        calc_toko['Realisasi SKU Sold'] = calc_toko['Realisasi SKU Sold'].astype(int)
+        def hitung_mhs_lolos_toko(row):
+            no_outlet = row['No Outlet']
+            s_force = row['Salesforce']
+            ch_pref = row['Channel_Prefix']
+            
+            prod_toko = outlet_prod_positive[outlet_prod_positive['No Outlet'] == no_outlet]
+            matched_prods = set()
+            for _, p_row in prod_toko.iterrows():
+                p_name = p_row['Nama Produk']
+                if cek_sku_valid_oleh_nama(p_name, s_force, ch_pref):
+                    matched_prods.add(p_name)
+            return len(matched_prods)
+
+        outlet_master['Realisasi SKU Sold'] = outlet_master.apply(hitung_mhs_lolos_toko, axis=1)
+        calc_toko = outlet_master.copy()
 
         calc_toko['Target SKU'] = calc_toko['Channel_Prefix'].map(DEFAULT_TARGET_CHANNEL).fillna(7).astype(int)
         calc_toko['Status Lolos'] = (calc_toko['Realisasi SKU Sold'] >= calc_toko['Target SKU']).astype(int)
@@ -240,12 +303,13 @@ if uploaded_lbp is not None:
 
         st.markdown("---")
 
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
             "📈 Kinerja Salesman", 
             "📍 Omset & Wilayah", 
             "📦 Subbrand & Divisi", 
             "🏬 Tipe Toko (Channel)", 
-            "🎯 Action Plan Toko"
+            "🎯 Action Plan Toko",
+            "📑 Master Mapping & List SKU"
         ])
 
         # TAB 1: KINERJA SALESMAN
@@ -300,7 +364,7 @@ if uploaded_lbp is not None:
             st.dataframe(tbl_sales, use_container_width=True, hide_index=True)
             st.download_button("📥 Download Tabel Salesman (.xlsx)", data=convert_df_to_excel({'KINERJA_SALESMAN': tbl_sales}), file_name="Kinerja_Salesman.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-        # TAB 2: OMSET & WILAYAH (TERMASUK KABUPATEN, KECAMATAN, DAN PASAR)
+        # TAB 2: OMSET & WILAYAH (TERMASUK PASAR)
         with tab2:
             st.subheader("Analisis Penjualan Berdasarkan Wilayah & Pasar")
             col_kab, col_kec = st.columns(2)
@@ -406,9 +470,9 @@ if uploaded_lbp is not None:
             fig_ch.update_layout(height=280, margin=dict(l=10, r=10, t=35, b=10))
             st.plotly_chart(fig_ch, use_container_width=True)
 
-        # TAB 5: ACTION PLAN GAP MHS (TAMPILKAN SKU SUDAH MASUK & REFERENSI BELUM MASUK TANPA BATASAN)
+        # TAB 5: ACTION PLAN GAP MHS (MAPPING LIST SKU MASUK & BELUM MASUK)
         with tab5:
-            st.subheader("🎯 Action Plan: Toko Belum Lolos & Detail SKU Masuk/Belum Masuk")
+            st.subheader("🎯 Action Plan: Toko Belum Lolos & Detail Mappings SKU")
             sls_options = ['SEMUA TIM SS'] + selected_salesmen
             pilih_sales = st.selectbox("Filter Berdasarkan Salesman:", sls_options)
 
@@ -423,91 +487,109 @@ if uploaded_lbp is not None:
             st.download_button("📥 Download Excel Gap Toko", data=convert_df_to_excel({'GAP_TOKO': tbl_gap}), file_name="Gap_Toko_Action_Plan.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
             st.markdown("---")
-            st.markdown("### 🔍 **Pemeriksaan Detail SKU & Referensi Push Order Toko**")
-            st.caption("Pilih salah satu toko di bawah untuk melihat rincian SKU yang SUDAH masuk dan referensi SKU yang BELUM masuk:")
+            st.markdown("### 🔍 **Pemeriksaan Detail MHS & Referensi Push Order Toko**")
+            st.caption("Pilih salah satu toko di bawah untuk melihat rincian kategori MHS yang SUDAH masuk dan yang BELUM masuk:")
 
             if len(gap_outlets) > 0:
                 gap_outlets['Pilihan_Label'] = gap_outlets['No Outlet'].astype(str) + " - " + gap_outlets['Nama Outlet'] + " (Kurang " + gap_outlets['Gap SKU'].astype(str) + " SKU | " + gap_outlets['Salesman'] + ")"
                 outlet_options = gap_outlets['Pilihan_Label'].tolist()
                 
-                selected_outlet_label = st.selectbox("Pilih Toko untuk Melihat Detail SKU:", outlet_options)
+                selected_outlet_label = st.selectbox("Select Toko untuk Detail Mapping SKU:", outlet_options)
                 selected_no_outlet = int(selected_outlet_label.split(" - ")[0])
 
                 toko_info = gap_outlets[gap_outlets['No Outlet'] == selected_no_outlet].iloc[0]
                 
+                s_force_toko = toko_info['Salesforce']
+                ch_pref_toko = toko_info['Channel_Prefix']
+                list_nama_sah, nama_kanal_str = get_keywords_for_channel(s_force_toko, ch_pref_toko)
+
                 st.markdown(f"""
                 <div class="outlet-card">
                     <h4 style="margin:0; color:#0f172a;">🏪 {toko_info['Nama Outlet']} (No: {toko_info['No Outlet']})</h4>
                     <p style="margin:4px 0 0 0; font-size:0.85rem; color:#475569;">
-                        Salesman: <b>{toko_info['Salesman']}</b> | Channel: <b>{toko_info['Channel']}</b> | Wilayah: <b>{toko_info['Kabupaten']}</b><br>
-                        Target Channel: <b>{toko_info['Target SKU']} SKU</b> | Sudah Masuk: <b style="color:#0284c7;">{toko_info['Realisasi SKU Sold']} SKU</b> | 
+                        Salesman: <b>{toko_info['Salesman']}</b> | Channel: <b>{toko_info['Channel']}</b> | Klasifikasi Mapping: <b style="color:#0284c7;">{nama_kanal_str}</b><br>
+                        Target Wajib: <b>{toko_info['Target SKU']} SKU</b> | Sudah Masuk: <b>{toko_info['Realisasi SKU Sold']} SKU</b> | 
                         Kekurangan: <b style="color:#dc2626;">{toko_info['Gap SKU']} SKU Lagi</b>
                     </p>
                 </div>
                 """, unsafe_allow_html=True)
 
-                # Master seluruh varian SKU unik yang ada di file LBP (sebagai referensi penuh)
-                master_all_sku = df_raw[['Pcode_Str', 'Nama Produk']].drop_duplicates(subset=['Pcode_Str']).copy()
-                master_all_sku = master_all_sku.rename(columns={'Pcode_Str': 'Pcode'})
+                df_outlet_tx = df[df['No Outlet'] == selected_no_outlet]
+                prod_toko_agg = df_outlet_tx.groupby('Nama Produk')['NET_QTY'].sum()
+                
+                sudah_masuk_list = []
+                belum_masuk_list = []
 
-                # SKU unik yang sudah dibeli toko ini (net qty > 0)
-                df_outlet_tx = df[(df['No Outlet'] == selected_no_outlet) & (df['NET_QTY'] > 0)]
-                sku_toko_masuk = df_outlet_tx[['Pcode_Str', 'Nama Produk', 'NET_QTY']].drop_duplicates(subset=['Pcode_Str'])
-                sku_toko_masuk = sku_toko_masuk.rename(columns={'Pcode_Str': 'Pcode', 'NET_QTY': 'Total Qty Terbeli'})
+                for kw in list_nama_sah:
+                    ditemukan = False
+                    net_qty_total = 0
+                    nama_terbeli_real = ""
+                    for p_nama, qty in prod_toko_agg.items():
+                        if kw in str(p_nama).upper() and qty > 0:
+                            ditemukan = True
+                            net_qty_total += qty
+                            nama_terbeli_real = p_nama
+                            
+                    if ditemukan:
+                        sudah_masuk_list.append({'Kategori MHS': kw, 'Nama Produk Real': nama_terbeli_real, 'Net Qty': int(net_qty_total)})
+                    else:
+                        belum_masuk_list.append({'Kategori MHS / Produk Wajib': kw})
 
-                pcodes_masuk = set(sku_toko_masuk['Pcode'])
-
-                # SKU yang belum pernah dibeli toko (referensi untuk sales)
-                sku_belum_masuk = master_all_sku[~master_all_sku['Pcode'].isin(pcodes_masuk)].copy()
+                df_sudah = pd.DataFrame(sudah_masuk_list)
+                df_belum = pd.DataFrame(belum_masuk_list)
 
                 col_sudah, col_belum = st.columns(2)
-
                 with col_sudah:
-                    st.markdown(f"#### ✅ SKU yang SUDAH Masuk ({len(sku_toko_masuk)} Varian)")
-                    if len(sku_toko_masuk) > 0:
-                        tbl_toko_masuk = beri_nomor_urut(sku_toko_masuk[['Pcode', 'Nama Produk', 'Total Qty Terbeli']])
-                        st.dataframe(tbl_toko_masuk, use_container_width=True, hide_index=True)
+                    st.markdown(f"#### ✅ Kategori MHS yang SUDAH Masuk ({len(df_sudah)} Varian)")
+                    if len(df_sudah) > 0:
+                        st.dataframe(beri_nomor_urut(df_sudah), use_container_width=True, hide_index=True)
                     else:
-                        st.info("Belum ada SKU yang terbeli di toko ini.")
+                        st.info("Belum ada MHS yang masuk.")
 
                 with col_belum:
-                    st.markdown(f"#### ❌ Referensi SKU yang BELUM Masuk ({len(sku_belum_masuk)} Varian)")
-                    if len(sku_belum_masuk) > 0:
-                        tbl_toko_belum = beri_nomor_urut(sku_belum_masuk[['Pcode', 'Nama Produk']])
-                        st.dataframe(tbl_toko_belum, use_container_width=True, hide_index=True)
+                    st.markdown(f"#### ❌ Referensi MHS yang BELUM Masuk ({len(df_belum)} Pilihan)")
+                    if len(df_belum) > 0:
+                        st.dataframe(beri_nomor_urut(df_belum), use_container_width=True, hide_index=True)
                     else:
-                        st.info("Semua varian SKU master sudah masuk di toko ini.")
+                        st.info("Semua kategori MHS sudah masuk.")
 
-                # Tombol Download Rekomendasi Excel Khusus Toko Tersebut
                 buf_toko = io.BytesIO()
                 with pd.ExcelWriter(buf_toko, engine='openpyxl') as writer:
-                    sku_toko_masuk.to_excel(writer, sheet_name='SKU_SUDAH_MASUK', index=False)
-                    sku_belum_masuk.to_excel(writer, sheet_name='REFERENSI_BELUM_MASUK', index=False)
-
+                    df_sudah.to_excel(writer, sheet_name='SUDAH_MASUK', index=False)
+                    df_belum.to_excel(writer, sheet_name='BELUM_MASUK', index=False)
+                
                 st.download_button(
-                    label=f"📥 Download Excel Detail & Referensi SKU ({toko_info['Nama Outlet']})",
+                    label=f"📥 Download Excel Mapping SKU ({toko_info['Nama Outlet']})",
                     data=buf_toko.getvalue(),
-                    file_name=f"Referensi_SKU_{toko_info['No Outlet']}.xlsx",
+                    file_name=f"Mapping_SKU_{toko_info['No Outlet']}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             else:
                 st.success("🎉 Seluruh toko yang tercover sudah lolos target SKU!")
 
+        # TAB 6: MASTER MAPPING & LIST SKU CHANNEL
+        with tab6:
+            st.subheader("📑 Master Mapping & Daftar Wajib SKU per Channel")
+            st.caption("Berikut adalah rincian daftar kata kunci produk wajib (Must Have SKU) yang dipetakan secara otomatis untuk masing-masing klasifikasi channel:")
+
+            c_ch1, c_ch2 = st.columns(2)
+            with c_ch1:
+                st.markdown("#### 1. Retail Kios GT (Channel 111/154)")
+                st.dataframe(beri_nomor_urut(pd.DataFrame({'Produk / Subbrand Wajib': KEYWORDS_GT_RETAIL_KIOS})), use_container_width=True, hide_index=True)
+
+                st.markdown("#### 2. Retail Large GT (Channel 113)")
+                st.dataframe(beri_nomor_urut(pd.DataFrame({'Produk / Subbrand Wajib': KEYWORDS_GT_RETAIL_LARGE})), use_container_width=True, hide_index=True)
+
+            with c_ch2:
+                st.markdown("#### 3. Grosir & Semi Grosir GT (Channel 114/115)")
+                st.dataframe(beri_nomor_urut(pd.DataFrame({'Produk / Subbrand Wajib': KEYWORDS_GT_GROSIR})), use_container_width=True, hide_index=True)
+
+                st.markdown("#### 4. General Modern Trade / GMM (Channel 110)")
+                st.dataframe(beri_nomor_urut(pd.DataFrame({'Produk / Subbrand Wajib': KEYWORDS_GMM})), use_container_width=True, hide_index=True)
+
             st.markdown("---")
-
-            buf = io.BytesIO()
-            with pd.ExcelWriter(buf, engine='openpyxl') as writer:
-                display_sales.to_excel(writer, sheet_name='PERFORMA_SALESMAN', index=False)
-                gap_outlets[cols_gap].to_excel(writer, sheet_name='GAP_OUTLET_ACTION', index=False)
-                kab_merge.to_excel(writer, sheet_name='OMSET_KABUPATEN', index=False)
-                calc_toko.to_excel(writer, sheet_name='DATABASE_OUTLET', index=False)
-
-            st.download_button(
-                label="📥 Unduh Seluruh Laporan Komprehensif (.xlsx)",
-                data=buf.getvalue(),
-                file_name="Laporan_Monitoring_Penjualan_MHS.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            st.markdown("#### 5. Speciality Trade / KVS ST (Salesforce KVS ST)")
+            st.dataframe(beri_nomor_urut(pd.DataFrame({'Produk / Subbrand Wajib': KEYWORDS_ST})), use_container_width=True, hide_index=True)
 
     except Exception as err:
         st.error(f"Gagal memproses file LBP: {str(err)}")
