@@ -204,8 +204,7 @@ if uploaded_lbp is not None:
         outlet_master = df[cols_exist].drop_duplicates(subset=['No Outlet']).copy()
         outlet_master['Channel_Prefix'] = outlet_master['Channel'].astype(str).str.slice(0, 3)
 
-        # Hitung realisasi SKU valid sesuai channel per toko
-        outlet_prod_agg = df.groupby(['No Outlet', 'Pcode_Str', 'Nama Produk', 'Salesforce'])['NET_QTY'].sum().reset_index()
+        outlet_prod_agg = df.groupby(['No Outlet', 'Nama Produk', 'Salesforce'])['NET_QTY'].sum().reset_index()
         outlet_prod_positive = outlet_prod_agg[outlet_prod_agg['NET_QTY'] > 0]
 
         def hitung_mhs_lolos_toko(row):
@@ -214,13 +213,12 @@ if uploaded_lbp is not None:
             ch_pref = row['Channel_Prefix']
             
             prod_toko = outlet_prod_positive[outlet_prod_positive['No Outlet'] == no_outlet]
-            matched_pcodes = set()
+            matched_prods = set()
             for _, p_row in prod_toko.iterrows():
                 p_name = p_row['Nama Produk']
-                p_code = p_row['Pcode_Str']
                 if cek_sku_valid_oleh_nama(p_name, s_force, ch_pref):
-                    matched_pcodes.add(p_code)
-            return len(matched_pcodes)
+                    matched_prods.add(p_name)
+            return len(matched_prods)
 
         outlet_master['Realisasi SKU Sold'] = outlet_master.apply(hitung_mhs_lolos_toko, axis=1)
         calc_toko = outlet_master.copy()
@@ -472,7 +470,7 @@ if uploaded_lbp is not None:
             fig_ch.update_layout(height=280, margin=dict(l=10, r=10, t=35, b=10))
             st.plotly_chart(fig_ch, use_container_width=True)
 
-        # TAB 5: ACTION PLAN GAP MHS (TAMPILKAN SELURUH SKU NYATA YANG SUDAH MASUK & BELUM MASUK TANPA DIKELOMPOKKAN)
+        # TAB 5: ACTION PLAN GAP MHS (LIST SKU SUDAH MASUK SESUAI REALISASI KUANTITAS)
         with tab5:
             st.subheader("🎯 Action Plan: Toko Belum Lolos & Detail SKU Masuk/Belum Masuk")
             sls_options = ['SEMUA TIM SS'] + selected_salesmen
@@ -489,8 +487,8 @@ if uploaded_lbp is not None:
             st.download_button("📥 Download Excel Gap Toko", data=convert_df_to_excel({'GAP_TOKO': tbl_gap}), file_name="Gap_Toko_Action_Plan.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
             st.markdown("---")
-            st.markdown("### 🔍 **Pemeriksaan Detail & Referensi SKU Toko**")
-            st.caption("Pilih salah satu toko di bawah untuk melihat rincian seluruh varian SKU yang SUDAH masuk dan yang BELUM masuk:")
+            st.markdown("### 🔍 **Pemeriksaan Detail SKU & Referensi Push Order Toko**")
+            st.caption("Pilih salah satu toko di bawah untuk melihat rincian seluruh varian SKU yang SUDAH masuk sesuai realisasi:")
 
             if len(gap_outlets) > 0:
                 gap_outlets['Pilihan_Label'] = gap_outlets['No Outlet'].astype(str) + " - " + gap_outlets['Nama Outlet'] + " (Kurang " + gap_outlets['Gap SKU'].astype(str) + " SKU | " + gap_outlets['Salesman'] + ")"
@@ -527,11 +525,12 @@ if uploaded_lbp is not None:
                     if cek_sku_valid_oleh_nama(p_name, s_force_toko, ch_pref_toko):
                         sku_sudah_list.append({'Pcode': p_code, 'Nama Produk': p_name, 'Net Qty': int(qty)})
                 
-                df_sku_sudah = pd.DataFrame(sku_sudah_list).drop_льникаduplicates(subset=['Pcode']).reset_index(drop=True)
+                df_sku_sudah = pd.DataFrame(sku_sudah_list).drop_duplicates(subset=['Pcode']).reset_index(drop=True)
 
                 # Master semua varian SKU sah berdasarkan channel yang ada di seluruh file LBP
                 all_valid_pcodes_in_area = df_raw[df_raw.apply(lambda r: cek_sku_valid_oleh_nama(r['Nama Produk'], r['Salesforce'], str(r['Channel'])[:3]), axis=1)][['Pcode', 'Nama Produk']].drop_duplicates(subset=['Pcode']).copy()
-                
+                all_valid_pcodes_in_area['Pcode'] = all_valid_pcodes_in_area['Pcode'].astype(str)
+
                 pcodes_sudah_masuk = set(df_sku_sudah['Pcode'])
                 df_sku_belum = all_valid_pcodes_in_area[~all_valid_pcodes_in_area['Pcode'].isin(pcodes_sudah_masuk)].copy()
 
